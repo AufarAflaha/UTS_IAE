@@ -1,0 +1,77 @@
+# Development environment
+version: '3.8'
+
+services:
+  # REST API Service
+  rest-api:
+    build: ./services/rest-api
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=development
+    volumes:
+      - ./services/rest-api:/app
+      - /app/node_modules
+    command: npm run dev
+    networks:
+      - microservices-network
+
+  # GraphQL API Service
+  graphql-api:
+    build: ./services/graphql-api
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=development
+    volumes:
+      - ./services/graphql-api:/app
+      - /app/node_modules
+    command: npm run dev
+    networks:
+      - microservices-network
+
+  # API Gateway
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - REST_API_URL=http://rest-api:3001
+      - GRAPHQL_API_URL=http://graphql-api:4000
+      - NODE_ENV=development
+    depends_on:
+      - rest-api
+      - graphql-api
+    volumes:
+      - ./api-gateway:/app
+      - /app/node_modules
+    command: npm run dev
+    networks:
+      - microservices-network
+
+  # Frontend Application
+  frontend-app:
+    build: 
+      context: ./frontend-app
+      target: deps
+    ports:
+      - "3002:3000"
+    environment:
+      - NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:3000
+      - NEXT_PUBLIC_GRAPHQL_URL=http://localhost:4000/graphql
+    depends_on:
+      - api-gateway
+    volumes:
+      - ./frontend-app:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    networks:
+      - microservices-network
+
+networks:
+  microservices-network:
+    driver: bridge

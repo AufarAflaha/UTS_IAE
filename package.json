@@ -1,0 +1,32 @@
+{
+  "name": "microservices-demo",
+  "version": "1.0.0",
+  "description": "Microservices demo with REST API, GraphQL, API Gateway, and Next.js frontend",
+  "scripts": {
+    "dev": "docker-compose -f docker-compose.dev.yml up --build",
+    "start": "docker-compose up --build",
+    "stop": "docker-compose down",
+    "clean": "docker-compose down -v --rmi all",
+    "install:all": "npm run install:rest && npm run install:graphql && npm run install:gateway && npm run install:frontend",
+    "install:rest": "cd services/rest-api && npm install",
+    "install:graphql": "cd services/graphql-api && npm install",
+    "install:gateway": "cd api-gateway && npm install",
+    "install:frontend": "cd frontend-app && npm install"
+  },
+  "keywords": [
+    "microservices",
+    "rest",
+    "graphql",
+    "api-gateway",
+    "nextjs"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@apollo/server": "^5.1.0",
+    "express": "^5.1.0",
+    "graphql": "^16.12.0",
+    "graphql-ws": "^6.0.6",
+    "ws": "^8.18.3"
+  }
+}
