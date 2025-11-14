@@ -1,8 +1,8 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcryptjs'); // <-- Ganti dari bcryptsdo
 const jwt = require('jsonwebtoken');
-const { validateUser } = require('../middleware/validation');
+const { validateUser, validateUserUpdate } = require('../middleware/validation');
 
 // --- DATABASE SEMENTARA ---
 const users = [
@@ -11,7 +11,7 @@ const users = [
     name: 'User Utama',
     email: 'user@example.com',
     passwordHash: bcrypt.hashSync('password123', 10), // Enkripsi password
-    team: 'Team Avengers',
+    team: 'Team Avengers', // <-- GANTI TIM
     role: 'admin',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -19,6 +19,7 @@ const users = [
 ];
 // ----------------------------
 
+// Modul ini sekarang menerima privateKey sebagai argumen
 module.exports = (privateKey) => {
   const router = express.Router();
 
@@ -73,13 +74,12 @@ module.exports = (privateKey) => {
         email: user.email,
         team: user.team,
         role: user.role,
-        // 'name' juga bisa ditambahkan jika diperlukan di service lain
         name: user.name 
       };
 
       // Tandatangani token dengan PRIVATE KEY
       const token = jwt.sign(payload, privateKey, { 
-        algorithm: 'RS256', // <-- INI DIA PERBAIKANNYA (dari 'rsa' ke 'RS256')
+        algorithm: 'RS256', // <-- Algoritma 'RS256' SUDAH BENAR
         expiresIn: '1h' 
       });
       
@@ -97,6 +97,7 @@ module.exports = (privateKey) => {
 
 
   // --- RUTE CRUD USER (TERPROTEKSI) ---
+  // Rute ini sekarang akan dilindungi oleh API Gateway
 
   // GET /api/users - Get all users
   router.get('/', (req, res) => {

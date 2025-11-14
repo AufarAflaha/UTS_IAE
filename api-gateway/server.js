@@ -62,10 +62,9 @@ const authenticateToken = (req, res, next) => {
     }
     
     // Teruskan data user ke service di belakangnya via header
+    // Kita encode agar karakter spesial (seperti spasi di nama) aman
     req.user = user;
-    req.headers['x-user-id'] = user.sub; // 'sub' (subject) adalah ID user
-    req.headers['x-user-email'] = user.email;
-    req.headers['x-user-team'] = user.team;
+    req.headers['x-user'] = encodeURIComponent(JSON.stringify(user));
     
     console.log(`[GW-AUTH] User ${user.email} terotentikasi.`);
     next();
@@ -101,6 +100,10 @@ const restApiProxy = createProxyMiddleware({
   target: REST_API_URL,
   changeOrigin: true,
   onProxyReq: (proxyReq, req, res) => {
+    // Teruskan header user jika ada (untuk rute terproteksi)
+    if (req.headers['x-user']) {
+      proxyReq.setHeader('x-user-id', req.user.sub); // Kirim ID user
+    }
     console.log(`[GW-REST] Meneruskan rute: ${req.method} ${req.path}`);
   },
   onError: (err, req, res) => {
@@ -115,10 +118,8 @@ const graphqlApiProxy = createProxyMiddleware({
   ws: true, // WAJIB untuk subscriptions
   onProxyReq: (proxyReq, req, res) => {
     // Teruskan header user yang sudah terotentikasi ke service GraphQL
-    if (req.headers['x-user-id']) {
-      proxyReq.setHeader('x-user-id', req.headers['x-user-id']);
-      proxyReq.setHeader('x-user-email', req.headers['x-user-email']);
-      proxyReq.setHeader('x-user-team', req.headers['x-user-team']);
+    if (req.headers['x-user']) {
+      proxyReq.setHeader('x-user', req.headers['x-user']);
     }
     console.log(`[GW-GQL] Meneruskan rute GraphQL: ${req.body?.operationName || 'WebSocket'}`);
   },

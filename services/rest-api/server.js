@@ -2,9 +2,15 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const crypto = require('crypto'); // <-- Diperlukan untuk Keygen
-const { validateUser } = require('./middleware/validation'); // <-- PERBAIKAN DI SINI
-const userRoutes = require('./routes/users');
+
+// --- PERBAIKAN PATH DI SINI ---
+// Path './' sudah benar karena file-file ini ada di folder 'middleware'
+// yang sejajar dengan 'server.js'
+const { validateUser } = require('./middleware/validation'); 
 const { errorHandler } = require('./middleware/errorHandler');
+// ----------------------------
+
+const userRoutes = require('./routes/users');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -12,7 +18,7 @@ const PORT = process.env.PORT || 3001;
 // --- Pembuatan Kunci Asimetris ---
 // Di dunia nyata, ini akan disimpan di .env atau secret manager
 // BUKAN di-generate setiap kali server start.
-const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { // <-- Tipe 'rsa' SUDAH BENAR
   modulusLength: 2048, // Standar keamanan yang baik
   publicKeyEncoding: {
     type: 'spki',
