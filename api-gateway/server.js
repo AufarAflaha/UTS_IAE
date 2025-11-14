@@ -1,120 +1,148 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const axios = require('axios'); // Pastikan axios diinstal di package.json
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const REST_API_URL = process.env.REST_API_URL || 'http://rest-api:3001';
+const GRAPHQL_API_URL = process.env.GRAPHQL_API_URL || 'http://graphql-api:4000';
 
-// Security middleware
-app.use(helmet());
+let PUBLIC_KEY_CACHE = null;
 
-// CORS configuration
-app.use(cors({
-  origin: [
-    'http://localhost:3002', // Frontend
-    'http://localhost:3000', // Gateway itself
-    'http://frontend-app:3002' // Docker container name
-  ],
-  credentials: true
-}));
+/**
+ * Mengambil public key dari User Service.
+ * Akan mencoba lagi setiap 5 detik jika gagal.
+ */
+async function fetchPublicKey() {
+  try {
+    // Gunakan nama service Docker 'rest-api' untuk komunikasi internal
+    const response = await axios.get(`${REST_API_URL}/public-key`);
+    if (response.data && response.data.publicKey) {
+      PUBLIC_KEY_CACHE = response.data.publicKey;
+      console.log('✅ Public key berhasil diambil dari User Service');
+    } else {
+      throw new Error('Format public key tidak valid');
+    }
+  } catch (error) {
+    console.error(`❌ Gagal mengambil public key dari ${REST_API_URL}: ${error.message}`);
+    console.log('Mencoba lagi dalam 5 detik...');
+    setTimeout(fetchPublicKey, 5000); // Coba lagi setelah 5 detik
+  }
+}
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use(limiter);
+/**
+ * Middleware Otentikasi untuk memverifikasi JWT.
+ */
+const authenticateToken = (req, res, next) => {
+  // Izinkan query Introspection GraphQL untuk lolos
+  if (req.body && req.body.operationName === 'IntrospectionQuery') {
+    return next();
+  }
+  
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Format: Bearer TOKEN
 
-// Health check endpoint
+  if (token == null) {
+    console.warn('[GW-AUTH] Token tidak ditemukan');
+    return res.status(401).json({ error: 'Token tidak ditemukan' });
+  }
+
+  if (!PUBLIC_KEY_CACHE) {
+    console.error('[GW-AUTH] Public key belum siap, otentikasi gagal.');
+    return res.status(503).json({ error: 'Service belum siap, coba lagi.' });
+  }
+
+  // Verifikasi token menggunakan public key
+  jwt.verify(token, PUBLIC_KEY_CACHE, { algorithms: ['RS256'] }, (err, user) => {
+    if (err) {
+      console.warn(`[GW-AUTH] Token tidak valid: ${err.message}`);
+      return res.status(403).json({ error: 'Token tidak valid' });
+    }
+    
+    // Teruskan data user ke service di belakangnya via header
+    req.user = user;
+    req.headers['x-user-id'] = user.sub; // 'sub' (subject) adalah ID user
+    req.headers['x-user-email'] = user.email;
+    req.headers['x-user-team'] = user.team;
+    
+    console.log(`[GW-AUTH] User ${user.email} terotentikasi.`);
+    next();
+  });
+};
+
+// --- Global Middleware ---
+app.use(cors()); // Aktifkan CORS untuk semua rute
+app.use(express.json()); // Body parser untuk JSON
+
+// --- Rute Publik (Tidak Perlu Token) ---
+
+// Health check
 app.get('/health', (req, res) => {
   res.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString(),
-    services: {
-      'rest-api': process.env.REST_API_URL || 'http://localhost:3001',
-      'graphql-api': process.env.GRAPHQL_API_URL || 'http://localhost:4000'
-    }
+    status: 'healthy',
+    publicKeyCached: PUBLIC_KEY_CACHE != null
   });
 });
 
-// Proxy configuration for REST API
+// Endpoint untuk frontend mengambil public key (jika diperlukan)
+app.get('/public-key', (req, res) => {
+  if (PUBLIC_KEY_CACHE) {
+    res.json({ publicKey: PUBLIC_KEY_CACHE });
+  } else {
+    res.status(503).json({ error: 'Public key belum tersedia.' });
+  }
+});
+
+// --- Definisi Proxy ---
+
 const restApiProxy = createProxyMiddleware({
-  target: process.env.REST_API_URL || 'http://localhost:3001',
+  target: REST_API_URL,
   changeOrigin: true,
-  pathRewrite: {
-    '^/api': '/api', // Keep the /api prefix
+  onProxyReq: (proxyReq, req, res) => {
+    console.log(`[GW-REST] Meneruskan rute: ${req.method} ${req.path}`);
   },
   onError: (err, req, res) => {
-    console.error('REST API Proxy Error:', err.message);
-    res.status(500).json({ 
-      error: 'REST API service unavailable',
-      message: err.message 
-    });
-  },
-  onProxyReq: (proxyReq, req, res) => {
-    console.log(`[REST API] ${req.method} ${req.url} -> ${proxyReq.path}`);
+    console.error('REST Proxy Error:', err);
+    res.status(502).json({ error: 'REST service tidak tersedia.' });
   }
 });
 
-// Proxy configuration for GraphQL API
 const graphqlApiProxy = createProxyMiddleware({
-  target: process.env.GRAPHQL_API_URL || 'http://localhost:4000',
+  target: GRAPHQL_API_URL,
   changeOrigin: true,
-  ws: true, // Enable WebSocket proxying for subscriptions
-  onError: (err, req, res) => {
-    console.error('GraphQL API Proxy Error:', err.message);
-    res.status(500).json({ 
-      error: 'GraphQL API service unavailable',
-      message: err.message 
-    });
-  },
+  ws: true, // WAJIB untuk subscriptions
   onProxyReq: (proxyReq, req, res) => {
-    console.log(`[GraphQL API] ${req.method} ${req.url} -> ${proxyReq.path}`);
+    // Teruskan header user yang sudah terotentikasi ke service GraphQL
+    if (req.headers['x-user-id']) {
+      proxyReq.setHeader('x-user-id', req.headers['x-user-id']);
+      proxyReq.setHeader('x-user-email', req.headers['x-user-email']);
+      proxyReq.setHeader('x-user-team', req.headers['x-user-team']);
+    }
+    console.log(`[GW-GQL] Meneruskan rute GraphQL: ${req.body?.operationName || 'WebSocket'}`);
+  },
+  onError: (err, req, res) => {
+    console.error('GraphQL Proxy Error:', err);
+    res.status(502).json({ error: 'GraphQL service tidak tersedia.' });
   }
 });
 
-// Apply proxies
-app.use('/api', restApiProxy);
-app.use('/graphql', graphqlApiProxy);
+// --- Routing Table ---
+// Penting: Rute publik yang spesifik HARUS didefinisikan SEBELUM rute terproteksi
 
-// Catch-all route
-app.get('*', (req, res) => {
-  res.status(404).json({ 
-    error: 'Route not found',
-    availableRoutes: [
-      '/health',
-      '/api/* (proxied to REST API)',
-      '/graphql (proxied to GraphQL API)'
-    ]
-  });
+// 1. Rute Publik (tanpa autentikasi)
+// Menggunakan app.post agar spesifik dan tidak "jatuh" ke middleware /api di bawah
+app.post('/api/users/login', restApiProxy);
+app.post('/api/users/register', restApiProxy);
+
+// 2. Rute Terproteksi (memerlukan token)
+app.use('/api', authenticateToken, restApiProxy); // Melindungi semua rute /api lainnya
+app.use('/graphql', authenticateToken, graphqlApiProxy); // Melindungi semua rute /graphql
+
+// --- Server Start ---
+app.listen(PORT, () => {
+  console.log(`🚀 API Gateway berjalan di port ${PORT}`);
+  // Ambil public key saat startup
+  fetchPublicKey();
 });
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Gateway Error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
-});
-
-const server = app.listen(PORT, () => {
-  console.log(`🚀 API Gateway running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔄 Proxying /api/* to: ${process.env.REST_API_URL || 'http://localhost:3001'}`);
-  console.log(`🔄 Proxying /graphql to: ${process.env.GRAPHQL_API_URL || 'http://localhost:4000'}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
-
-module.exports = app;

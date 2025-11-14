@@ -1,27 +1,41 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const crypto = require('crypto'); // <-- Diperlukan untuk Keygen
+const { validateUser } = require('./middleware/validation'); // <-- PERBAIKAN DI SINI
 const userRoutes = require('./routes/users');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// --- Pembuatan Kunci Asimetris ---
+// Di dunia nyata, ini akan disimpan di .env atau secret manager
+// BUKAN di-generate setiap kali server start.
+const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048, // Standar keamanan yang baik
+  publicKeyEncoding: {
+    type: 'spki',
+    format: 'pem'
+  },
+  privateKeyEncoding: {
+    type: 'pkcs8',
+    format: 'pem'
+  }
+});
+
+console.log('Public Key Dibuat. API Gateway akan mengambil ini.');
+// ---------------------------------
+
 // Security middleware
 app.use(helmet());
 app.use(cors());
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
-
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// --- Rute Publik ---
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -32,8 +46,14 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Routes
-app.use('/api/users', userRoutes);
+// Endpoint untuk API Gateway mengambil public key
+app.get('/public-key', (req, res) => {
+  res.status(200).json({ publicKey: publicKey });
+});
+
+// --- Rute API ---
+// Mengirim privateKey ke modul rute agar bisa menandatangani JWT
+app.use('/api/users', userRoutes(privateKey));
 
 // Error handling middleware
 app.use(errorHandler);
@@ -47,8 +67,8 @@ app.use('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 REST API Service running on port ${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/health`);
+  console.log(`🚀 User Service (REST) berjalan di port ${PORT}`);
+  console.log(`🔑 Menyediakan Public Key di /public-key`);
 });
 
 module.exports = app;

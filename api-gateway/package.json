@@ -13,12 +13,18 @@
     "cors": "^2.8.5",
     "helmet": "^6.1.5",
     "express-rate-limit": "^6.7.0",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "jsonwebtoken": "^9.0.2",
+    "axios": "^1.6.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
   },
-  "keywords": ["api-gateway", "proxy", "microservices"],
+  "keywords": [
+    "api-gateway",
+    "proxy",
+    "microservices"
+  ],
   "author": "",
   "license": "ISC"
 }

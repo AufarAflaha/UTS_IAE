@@ -9,13 +9,13 @@ export const apiClient = axios.create({
   },
 });
 
-// User API calls
-export const userApi = {
-  getUsers: () => apiClient.get('/api/users'),
-  getUser: (id: string) => apiClient.get(`/api/users/${id}`),
-  createUser: (userData: { name: string; email: string; age: number }) => 
-    apiClient.post('/api/users', userData),
-  updateUser: (id: string, userData: { name?: string; email?: string; age?: number }) => 
-    apiClient.put(`/api/users/${id}`, userData),
-  deleteUser: (id: string) => apiClient.delete(`/api/users/${id}`),
+// API calls untuk Otentikasi
+export const authApi = {
+  login: (credentials: { email: string; password: string }) => 
+    apiClient.post('/api/users/login', credentials),
+    
+  register: (userData: any) => // Ganti 'any' dengan tipe yang lebih spesifik
+    apiClient.post('/api/users/register', userData),
+    
+  getUsers: () => apiClient.get('/api/users'), // Rute ini mungkin perlu token
 };

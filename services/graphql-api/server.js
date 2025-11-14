@@ -1,4 +1,4 @@
-// 1. IMPORT (GAYA v4 + KEBUTUHAN ANDA)
+// 1. IMPORT
 const { ApolloServer } = require('@apollo/server');
 const { expressMiddleware } = require('@apollo/server/express4');
 const { createServer } = require('http');
@@ -12,142 +12,140 @@ const { v4: uuidv4 } = require('uuid');
 
 const pubsub = new PubSub();
 
-// 2. DATA IN-MEMORY ANDA (SAMA SEPERTI FILE LAMA ANDA)
-let posts = [
+// 2. DATA IN-MEMORY (Diganti menjadi Tasks)
+let tasks = [
   {
     id: '1',
-    title: 'Welcome to GraphQL',
-    content: 'This is our first GraphQL post with subscriptions!',
-    author: 'GraphQL Team',
+    title: 'Desain Arsitektur Microservices',
+    status: 'IN_PROGRESS',
+    team: 'Team Avengers',
+    assignedTo: 'user@example.com',
     createdAt: new Date().toISOString(),
   },
   {
     id: '2',
-    title: 'Real-time Updates',
-    content: 'Watch this space for real-time updates using GraphQL subscriptions.',
-    author: 'Development Team',
+    title: 'Implementasi JWT (Asymmetric)',
+    status: 'TODO',
+    team: 'Team Avengers',
+    assignedTo: null,
     createdAt: new Date().toISOString(),
-  }
-];
-
-let comments = [
+  },
   {
-    id: '1',
-    postId: '1',
-    content: 'Great introduction to GraphQL!',
-    author: 'John Doe',
+    id: '3',
+    title: 'Setup Frontend CI/CD',
+    status: 'TODO',
+    team: 'Team JusticeLeague',
+    assignedTo: null,
     createdAt: new Date().toISOString(),
   }
 ];
 
-
-// 3. TYPEDEFS ANDA (SAMA SEPERTI FILE LAMA ANDA)
+// 3. TYPEDEFS (Diganti menjadi Tasks)
 const typeDefs = `
-  type Post {
+  enum TaskStatus {
+    TODO
+    IN_PROGRESS
+    DONE
+  }
+
+  type Task {
     id: ID!
     title: String!
-    content: String!
-    author: String!
-    createdAt: String!
-    comments: [Comment!]!
-  }
-
-  type Comment {
-    id: ID!
-    postId: ID!
-    content: String!
-    author: String!
+    status: TaskStatus!
+    team: String!
+    assignedTo: String
     createdAt: String!
   }
 
   type Query {
-    posts: [Post!]!
-    post(id: ID!): Post
-    comments(postId: ID!): [Comment!]!
+    # Mengambil task berdasarkan tim dari user yang login
+    myTasks: [Task!]!
+    allTasks: [Task!]!
   }
 
   type Mutation {
-    createPost(title: String!, content: String!, author: String!): Post!
-    updatePost(id: ID!, title: String, content: String): Post!
-    deletePost(id: ID!): Boolean!
-    createComment(postId: ID!, content: String!, author: String!): Comment!
-    deleteComment(id: ID!): Boolean!
+    createTask(title: String!): Task!
+    updateTaskStatus(id: ID!, status: TaskStatus!): Task!
   }
 
   type Subscription {
-    postAdded: Post!
-    commentAdded: Comment!
-    postUpdated: Post!
-    postDeleted: ID!
+    # Notifikasi real-time untuk task baru di tim Anda
+    taskAdded: Task!
+    # Notifikasi real-time untuk update status
+    taskUpdated: Task!
   }
 `;
 
-// 4. RESOLVERS ANDA (SAMA SEPERTI FILE LAMA ANDA)
+// 4. RESOLVERS (Diganti menjadi Tasks)
 const resolvers = {
   Query: {
-    posts: () => posts,
-    post: (_, { id }) => posts.find(post => post.id === id),
-    comments: (_, { postId }) => comments.filter(comment => comment.postId === postId),
-  },
-
-  Post: {
-    comments: (parent) => comments.filter(comment => comment.postId === parent.id),
+    // 'context.user' akan dikirim oleh API Gateway
+    myTasks: (parent, args, context) => {
+      if (!context.user) {
+        throw new Error('401 - Anda harus login untuk melihat task');
+      }
+      return tasks.filter(task => task.team === context.user.team);
+    },
+    allTasks: () => tasks,
   },
 
   Mutation: {
-    createPost: (_, { title, content, author }) => {
-      const newPost = {
+    createTask: (parent, { title }, context) => {
+      if (!context.user) {
+        throw new Error('401 - Anda harus login untuk membuat task');
+      }
+      
+      const newTask = {
         id: uuidv4(),
         title,
-        content,
-        author,
+        status: 'TODO',
+        team: context.user.team, // Otomatis set tim dari user
+        assignedTo: context.user.email,
         createdAt: new Date().toISOString(),
       };
-      posts.push(newPost);
-      pubsub.publish('POST_ADDED', { postAdded: newPost });
-      return newPost;
+      tasks.push(newTask);
+      
+      // Publish notifikasi
+      pubsub.publish('TASK_ADDED', { taskAdded: newTask });
+      console.log('Task baru dibuat:', newTask.title);
+      
+      return newTask;
     },
 
-    updatePost: (_, { id, title, content }) => {
-      const postIndex = posts.findIndex(post => post.id === id);
-      if (postIndex === -1) throw new Error('Post not found');
-      const updatedPost = { ...posts[postIndex], ...(title && { title }), ...(content && { content }) };
-      posts[postIndex] = updatedPost;
-      pubsub.publish('POST_UPDATED', { postUpdated: updatedPost });
-      return updatedPost;
-    },
+    updateTaskStatus: (parent, { id, status }, context) => {
+      if (!context.user) {
+        throw new Error('401 - Anda harus login untuk update task');
+      }
+      
+      const taskIndex = tasks.findIndex(task => task.id === id);
+      if (taskIndex === -1) {
+        throw new Error('404 - Task tidak ditemukan');
+      }
+      
+      // Pastikan user hanya bisa update task di timnya
+      if (tasks[taskIndex].team !== context.user.team) {
+         throw new Error('403 - Akses ditolak: Anda tidak berada di tim ini');
+      }
 
-    deletePost: (_, { id }) => {
-      const postIndex = posts.findIndex(post => post.id === id);
-      if (postIndex === -1) return false;
-      comments = comments.filter(comment => comment.postId !== id);
-      posts.splice(postIndex, 1);
-      pubsub.publish('POST_DELETED', { postDeleted: id });
-      return true;
-    },
+      tasks[taskIndex].status = status;
+      const updatedTask = tasks[taskIndex];
+      
+      // Publish notifikasi
+      pubsub.publish('TASK_UPDATED', { taskUpdated: updatedTask });
+      console.log('Task diupdate:', updatedTask.title);
 
-    createComment: (_, { postId, content, author }) => {
-      const post = posts.find(p => p.id === postId);
-      if (!post) throw new Error('Post not found');
-      const newComment = { id: uuidv4(), postId, content, author, createdAt: new Date().toISOString() };
-      comments.push(newComment);
-      pubsub.publish('COMMENT_ADDED', { commentAdded: newComment });
-      return newComment;
-    },
-
-    deleteComment: (_, { id }) => {
-      const commentIndex = comments.findIndex(comment => comment.id === id);
-      if (commentIndex === -1) return false;
-      comments.splice(commentIndex, 1);
-      return true;
+      return updatedTask;
     },
   },
 
   Subscription: {
-    postAdded: { subscribe: () => pubsub.asyncIterator(['POST_ADDED']) },
-    commentAdded: { subscribe: () => pubsub.asyncIterator(['COMMENT_ADDED']) },
-    postUpdated: { subscribe: () => pubsub.asyncIterator(['POST_UPDATED']) },
-    postDeleted: { subscribe: () => pubsub.asyncIterator(['POST_DELETED']) },
+    taskAdded: {
+      subscribe: () => pubsub.asyncIterator(['TASK_ADDED']),
+      // TODO: Filter notifikasi di sini berdasarkan tim user
+    },
+    taskUpdated: {
+      subscribe: () => pubsub.asyncIterator(['TASK_UPDATED']),
+    },
   },
 };
 
@@ -156,32 +154,39 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
 
-  // Buat schema agar bisa dipakai di 2 tempat
   const schema = makeExecutableSchema({ typeDefs, resolvers });
 
-  // Setup WebSocket Server untuk Subscriptions
+  // Setup WebSocket Server
   const wsServer = new WebSocketServer({
     server: httpServer,
-    path: '/graphql', // Path yang sama dengan Apollo Server
+    path: '/graphql',
   });
-  const serverCleanup = useServer({ schema }, wsServer);
+  
+  // 'useServer' membutuhkan 'context' untuk koneksi WebSocket
+  const serverCleanup = useServer({ 
+    schema,
+    context: async (ctx) => {
+      // Otentikasi WebSocket dari API Gateway
+      // Gateway akan meneruskan header 'x-user'
+      try {
+        const userJson = ctx.extra.request.headers['x-user'];
+        const user = userJson ? JSON.parse(decodeURIComponent(userJson)) : null;
+        if (!user) throw new Error('User tidak terautentikasi');
+        console.log(`[WS] User terhubung: ${user.email}`);
+        return { user };
+      } catch (err) {
+        console.error('[WS] Gagal autentikasi:', err.message);
+        // Menutup koneksi jika tidak valid
+        // Kode 1008 = Policy Violation
+        return new Error(err.message, { code: 1008 });
+      }
+    }
+  }, wsServer);
 
-  // Setup Apollo Server untuk Query/Mutation
+  // Setup Apollo Server
   const server = new ApolloServer({
     schema,
-    context: ({ req }) => ({ req }), // Konteks Anda dari file lama
     plugins: [
-      // 1. Plugin logging Anda dari file lama
-      {
-        requestDidStart() {
-          return {
-            willSendResponse(requestContext) {
-              console.log(`GraphQL ${requestContext.request.operationName || 'Anonymous'} operation completed`);
-            },
-          };
-        },
-      },
-      // 2. Plugin wajib v4 untuk shutdown WebSocket
       {
         async serverWillStart() {
           return {
@@ -196,44 +201,50 @@ async function startServer() {
 
   await server.start();
 
-  // Terapkan middleware (CORS dulu, baru Apollo)
+  // Terapkan middleware
   app.use(
     '/graphql',
-    cors({ /* Opsi CORS Anda bisa ditaruh di sini jika perlu */ }),
+    cors(),
     express.json(),
+    // 'context' akan menerima info user dari header 'x-user' yang di-set oleh Gateway
     expressMiddleware(server, {
-        context: async ({ req }) => ({ req }), // Konteks juga bisa ditaruh di sini
+      context: async ({ req }) => {
+        try {
+          // Ambil user data yang sudah diverifikasi oleh Gateway
+          const userJson = req.headers['x-user'];
+          const user = userJson ? JSON.parse(decodeURIComponent(userJson)) : null;
+          return { user };
+        } catch (err) {
+          console.error('Error parsing user data from gateway:', err.message);
+          return {};
+        }
+      },
     })
   );
 
-  // Health check endpoint Anda dari file lama
+  // Health check
   app.get('/health', (req, res) => {
     res.json({
       status: 'healthy',
-      service: 'graphql-api',
+      service: 'task-service',
       timestamp: new Date().toISOString(),
-      data: { posts: posts.length, comments: comments.length }
     });
   });
   
-  // Error handling Anda dari file lama
+  // Error handling
   app.use((err, req, res, next) => {
-    console.error('GraphQL API Error:', err);
-    res.status(500).json({
-      error: 'Internal server error',
-      message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-    });
+    console.error('Task Service Error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   });
 
-  // Jalankan server gabungan
+  // Jalankan server
   const PORT = process.env.PORT || 4000;
   httpServer.listen(PORT, () => {
-    console.log(`🚀 Query server ready at http://localhost:${PORT}/graphql`);
-    console.log(`🚀 Subscription server ready at ws://localhost:${PORT}/graphql`);
-    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    console.log(`🚀 Task Service (GraphQL) berjalan di http://localhost:${PORT}/graphql`);
+    console.log(`🚀 Subscriptions berjalan di ws://localhost:${PORT}/graphql`);
   });
 
-  // Graceful shutdown Anda dari file lama
+  // Graceful shutdown
   process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
     httpServer.close(() => {
@@ -243,6 +254,6 @@ async function startServer() {
 }
 
 startServer().catch(error => {
-  console.error('Failed to start GraphQL server:', error);
+  console.error('Failed to start Task server:', error);
   process.exit(1);
 });
