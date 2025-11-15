@@ -116,7 +116,7 @@ app.post('/api/users/register', async (req, res) => {
 // Protected REST API routes
 app.use('/api', authenticateToken, async (req, res) => {
   try {
-    const url = `${REST_API_URL}${req.url}`;
+    const url = `${REST_API_URL}/api${req.url}`; 
     console.log(`[GW-PROTECTED] Forwarding ${req.method} to ${url}`);
     
     const response = await axios({

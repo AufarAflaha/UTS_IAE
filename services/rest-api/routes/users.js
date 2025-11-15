@@ -2,7 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs'); // <-- Ganti dari bcryptsdo
 const jwt = require('jsonwebtoken');
-const { validateUser, validateUserUpdate } = require('../middleware/validation');
+// Hapus validateUser, kita akan validasi manual sederhana
+const { validateUserUpdate } = require('../middleware/validation');
 
 // --- DATABASE SEMENTARA ---
 const users = [
@@ -26,8 +27,13 @@ module.exports = (privateKey) => {
   // --- RUTE OTENTIKASI (BARU) ---
 
   // POST /api/users/register
-  router.post('/register', validateUser, async (req, res) => {
-    const { name, email, password, team = 'default', role = 'user' } = req.body;
+  // Hapus middleware validateUser agar lebih mudah untuk form baru
+  router.post('/register', async (req, res) => {
+    // Validasi sederhana
+    const { name, email, password, team } = req.body;
+    if (!name || !email || !password || !team) {
+      return res.status(400).json({ error: 'Name, email, password, dan team diperlukan' });
+    }
     
     const existingUser = users.find(u => u.email === email);
     if (existingUser) {
@@ -41,7 +47,7 @@ module.exports = (privateKey) => {
       email,
       passwordHash,
       team,
-      role,
+      role: 'user', // Default role
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -97,7 +103,6 @@ module.exports = (privateKey) => {
 
 
   // --- RUTE CRUD USER (TERPROTEKSI) ---
-  // Rute ini sekarang akan dilindungi oleh API Gateway
 
   // GET /api/users - Get all users
   router.get('/', (req, res) => {
@@ -129,5 +134,33 @@ module.exports = (privateKey) => {
     });
   });
   
+  // +++ TAMBAHKAN RUTE DELETE /api/users/:id +++
+  router.delete('/:id', (req, res) => {
+    const authUserId = req.headers['x-user-id'];
+    const userIdToDelete = req.params.id;
+
+    // Cek admin (atau logika bisnis lainnya)
+    const adminUser = users.find(u => u.id === authUserId);
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Akses ditolak: Hanya admin yang bisa menghapus user' });
+    }
+    
+    // Jangan biarkan user menghapus dirinya sendiri
+    if (authUserId === userIdToDelete) {
+      return res.status(400).json({ error: 'Tidak dapat menghapus diri sendiri' });
+    }
+    
+    const userIndex = users.findIndex(u => u.id === userIdToDelete);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const [deletedUser] = users.splice(userIndex, 1);
+    console.log(`[USERS] User ${deletedUser.email} dihapus oleh ${adminUser.email}`);
+    
+    res.json({ message: 'User berhasil dihapus', id: deletedUser.id });
+  });
+  // +++ AKHIR TAMBAHAN +++
+
   return router;
 };

@@ -66,6 +66,7 @@ const typeDefs = `
   type Mutation {
     createTask(title: String!): Task!
     updateTaskStatus(id: ID!, status: TaskStatus!): Task!
+    deleteTask(id: ID!): Task # <-- TAMBAHKAN INI
   }
 
   type Subscription {
@@ -73,6 +74,7 @@ const typeDefs = `
     taskAdded: Task!
     # Notifikasi real-time untuk update status
     taskUpdated: Task!
+    taskDeleted: Task! # <-- TAMBAHKAN INI
   }
 `;
 
@@ -136,16 +138,46 @@ const resolvers = {
 
       return updatedTask;
     },
+
+    // +++ TAMBAHKAN RESOLVER BARU INI +++
+    deleteTask: (parent, { id }, context) => {
+      if (!context.user) {
+        throw new Error('401 - Anda harus login untuk menghapus task');
+      }
+
+      const taskIndex = tasks.findIndex(task => task.id === id);
+      if (taskIndex === -1) {
+        throw new Error('404 - Task tidak ditemukan');
+      }
+
+      if (tasks[taskIndex].team !== context.user.team) {
+         throw new Error('403 - Akses ditolak: Anda tidak berada di tim ini');
+      }
+
+      // Hapus task dari array
+      const [deletedTask] = tasks.splice(taskIndex, 1);
+      
+      // Publish notifikasi
+      pubsub.publish('TASK_DELETED', { taskDeleted: deletedTask });
+      console.log('Task dihapus:', deletedTask.title);
+
+      return deletedTask;
+    },
+    // +++ AKHIR TAMBAHAN +++
   },
 
   Subscription: {
     taskAdded: {
       subscribe: () => pubsub.asyncIterator(['TASK_ADDED']),
-      // TODO: Filter notifikasi di sini berdasarkan tim user
     },
     taskUpdated: {
       subscribe: () => pubsub.asyncIterator(['TASK_UPDATED']),
     },
+    // +++ TAMBAHKAN SUBSCRIBER BARU INI +++
+    taskDeleted: {
+      subscribe: () => pubsub.asyncIterator(['TASK_DELETED']),
+    },
+    // +++ AKHIR TAMBAHAN +++
   },
 };
 

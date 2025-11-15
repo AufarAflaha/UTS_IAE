@@ -25,6 +25,7 @@
   "dependencies": {
     "@apollo/client": "^4.0.9",
     "@apollo/server": "^5.1.0",
+    "axios": "^1.13.2",
     "express": "^5.1.0",
     "graphql": "^16.12.0",
     "graphql-ws": "^6.0.6",
