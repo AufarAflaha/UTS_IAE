@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, gql, useSubscription } from '@apollo/client';
+import React, { useState, useEffect, useCallback } from 'react';
+import { gql, useQuery, useMutation, useApolloClient } from '@apollo/client';
 import { authApi } from '@/lib/api';
-import axios from 'axios'; // Diperlukan untuk type checking error
+import axios from 'axios';
 
 // --- Definisi Tipe ---
 interface Task {
@@ -46,130 +46,130 @@ const UPDATE_TASK_STATUS = gql`
   }
 `;
 
-const TASK_UPDATED_SUBSCRIPTION = gql`
-  subscription OnTaskUpdated {
-    taskUpdated {
-      id
-      title
-      status
-    }
-  }
-`;
-// -------------------------
-
-
 export default function Home() {
+  const apolloClient = useApolloClient();
   const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState('user@example.com');
   const [password, setPassword] = useState('password123');
-  
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [notification, setNotification] = useState('');
 
-  // Cek token di local storage saat mount
+  const handleLogout = useCallback(() => {
+    console.log('[LOGOUT] Logging out user...');
+    localStorage.removeItem('token');
+    window.dispatchEvent(new Event('tokenChanged'));
+    setToken(null);
+    setNotification('Anda telah logout.');
+    apolloClient.clearStore();
+  }, [apolloClient]);
+
   useEffect(() => {
+    console.log('[MOUNT] Checking stored token...');
     const storedToken = localStorage.getItem('token');
     if (storedToken) {
+      console.log('[MOUNT] Token found');
       setToken(storedToken);
     }
   }, []);
 
-  // --- GraphQL Hooks ---
-  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks } = useQuery<{ myTasks: Task[] }>(GET_MY_TASKS, {
-    skip: !token, // Jangan jalankan query jika belum login
-    onError: (error) => {
-      // Jika token expired
-      if (error.message.includes('401') || error.message.includes('403')) {
-        handleLogout();
-        setNotification('Sesi Anda berakhir. Silakan login kembali.');
-      }
-    }
+  const { data: tasksData, loading: tasksLoading, refetch: refetchTasks, error: tasksError } = useQuery<{ myTasks: Task[] }>(GET_MY_TASKS, {
+    skip: !token,
+    fetchPolicy: 'network-only',
   });
 
+  useEffect(() => {
+    if (tasksError && token) {
+      console.error('[GRAPHQL-ERROR] Error:', tasksError);
+      const statusCode = (tasksError.networkError as any)?.statusCode;
+      
+      if (statusCode === 401 || statusCode === 403) {
+        console.warn('[GRAPHQL-ERROR] Auth error, logging out');
+        handleLogout();
+        setNotification('Sesi Anda berakhir. Silakan login kembali.');
+      } else {
+        console.warn('[GRAPHQL-ERROR] Non-auth error, staying logged in');
+        setNotification(`⚠️ Gagal memuat tasks: ${tasksError.message}`);
+      }
+    } else if (tasksData) {
+      console.log('[GRAPHQL-SUCCESS] Tasks loaded:', tasksData.myTasks.length);
+      setNotification('');
+    }
+  }, [tasksError, tasksData, token, handleLogout]);
+
   const [createTask] = useMutation(CREATE_TASK, {
-    onCompleted: () => refetchTasks() // Ambil ulang data setelah mutasi
+    onCompleted: () => {
+      console.log('[MUTATION] Task created');
+      refetchTasks();
+    },
+    onError: (error) => {
+      console.error('[MUTATION] Create error:', error);
+      setNotification(`Gagal membuat task: ${error.message}`);
+    }
   });
   
   const [updateTaskStatus] = useMutation(UPDATE_TASK_STATUS, {
-     onCompleted: () => refetchTasks()
-  });
-
-  // --- Subscription Hook ---
-  useSubscription(TASK_UPDATED_SUBSCRIPTION, {
-    skip: !token,
-    onData: ({ data }) => {
-      const task = data.data.taskUpdated;
-      setNotification(`NOTIFIKASI: Task '${task.title}' diupdate ke status ${task.status}!`);
+    onCompleted: () => {
+      console.log('[MUTATION] Task updated');
+      refetchTasks();
     },
-    onError: (error) => { // Menambahkan error handling di subscription
-      console.error('Subscription error:', error);
-      setNotification(`Koneksi real-time error: ${error.message}`);
+    onError: (error) => {
+      console.error('[MUTATION] Update error:', error);
+      setNotification(`Gagal update task: ${error.message}`);
     }
   });
-  // -------------------------
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setNotification('');
+    console.log('[LOGIN] Attempting login...');
+    
     try {
       const response = await authApi.login({ email, password });
+      console.log('[LOGIN] Success!');
+      
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
+        console.log('[LOGIN] Dispatching tokenChanged event');
+        window.dispatchEvent(new Event('tokenChanged'));
         setToken(response.data.token);
-        refetchTasks(); // Ambil tasks setelah login
+        setNotification('Login berhasil!');
+        
+        setTimeout(() => {
+          console.log('[LOGIN] Fetching tasks with new client...');
+          refetchTasks();
+        }, 100);
       }
     } catch (error) {
-      console.error('Error logging in:', error);
-      // Cek jika ini AxiosError
+      console.error('[LOGIN] Failed:', error);
       if (axios.isAxiosError(error)) {
         setNotification(error.response?.data?.error || 'Login gagal');
-      } else if (error instanceof Error) {
-        setNotification(error.message); // Fallback untuk error standar
       } else {
-        setNotification('Terjadi error tidak dikenal saat login');
+        setNotification('Login gagal');
       }
     }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
-    setNotification('Anda telah logout.');
   };
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle) return;
+    if (!newTaskTitle.trim()) return;
+    
+    console.log('[CREATE-TASK] Creating:', newTaskTitle);
     try {
       await createTask({ variables: { title: newTaskTitle } });
       setNewTaskTitle('');
-    } catch (error) { // error di sini aslinya 'unknown'
-      console.error('Error creating task:', error);
-      // Tambahkan type checking
-      if (error instanceof Error) {
-        setNotification(`Gagal membuat task: ${error.message}`);
-      } else {
-        setNotification('Gagal membuat task: Terjadi error tidak dikenal');
-      }
+    } catch (error) {
+      console.error('[CREATE-TASK] Error:', error);
     }
   };
   
   const handleStatusChange = async (id: string, newStatus: string) => {
+    console.log('[UPDATE-TASK] Updating', id, 'to', newStatus);
     try {
       await updateTaskStatus({ variables: { id, status: newStatus } });
-    } catch (error) { // error di sini aslinya 'unknown'
-      console.error('Error updating task:', error);
-      // Tambahkan type checking
-      if (error instanceof Error) {
-        setNotification(`Gagal update task: ${error.message}`);
-      } else {
-        setNotification('Gagal update task: Terjadi error tidak dikenal');
-      }
+    } catch (error) {
+      console.error('[UPDATE-TASK] Error:', error);
     }
   };
-
-
-  // --- Render ---
 
   if (!token) {
     return (
@@ -228,12 +228,15 @@ export default function Home() {
         </div>
         
         {notification && (
-            <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded mb-4">
-              {notification}
-            </div>
+          <div className={`px-4 py-3 rounded mb-4 ${
+            notification.includes('⚠️') || notification.includes('Gagal')
+              ? 'bg-yellow-100 border border-yellow-400 text-yellow-700'
+              : 'bg-blue-100 border border-blue-400 text-blue-700'
+          }`}>
+            {notification}
+          </div>
         )}
 
-        {/* Create Task */}
         <div className="bg-white shadow rounded-lg p-6 mb-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Buat Task Baru</h2>
           <form onSubmit={handleCreateTask} className="flex gap-4">
@@ -247,40 +250,44 @@ export default function Home() {
             />
             <button
               type="submit"
-              className="bg-green-500 text-white px-6 py-2 rounded-md hover:bg-green-600"
+              className="bg-green-500 text-white px-6 py-2 rounded-md hover:bg-green-600 whitespace-nowrap"
             >
               Tambah
             </button>
           </form>
         </div>
 
-        {/* Task List */}
         <div className="bg-white shadow rounded-lg p-6">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Daftar Task</h2>
           {tasksLoading ? (
-            <p>Loading tasks...</p>
+            <p className="text-gray-500">Loading tasks...</p>
+          ) : tasksError ? (
+            <p className="text-red-500">Error loading tasks. Please try refreshing the page.</p>
           ) : (
             <div className="space-y-4">
-              {tasksData?.myTasks.map((task: Task) => (
-                <div key={task.id} className="flex justify-between items-center p-4 border rounded-md">
-                  <div>
-                    <p className="font-semibold text-lg">{task.title}</p>
-                    <p className="text-gray-500 text-sm">
-                      Assignee: {task.assignedTo || 'Belum ada'}
-                    </p>
+              {tasksData?.myTasks && tasksData.myTasks.length > 0 ? (
+                tasksData.myTasks.map((task: Task) => (
+                  <div key={task.id} className="flex justify-between items-center p-4 border rounded-md hover:bg-gray-50">
+                    <div>
+                      <p className="font-semibold text-lg">{task.title}</p>
+                      <p className="text-gray-500 text-sm">
+                        Assignee: {task.assignedTo || 'Belum ada'}
+                      </p>
+                    </div>
+                    <select
+                      value={task.status}
+                      onChange={(e) => handleStatusChange(task.id, e.target.value)}
+                      className="border rounded-md px-3 py-2 bg-white"
+                    >
+                      <option value="TODO">To Do</option>
+                      <option value="IN_PROGRESS">In Progress</option>
+                      <option value="DONE">Done</option>
+                    </select>
                   </div>
-                  <select
-                    value={task.status}
-                    onChange={(e) => handleStatusChange(task.id, e.target.value)}
-                    className="border rounded-md px-3 py-2"
-                  >
-                    <option value="TODO">To Do</option>
-                    <option value="IN_PROGRESS">In Progress</option>
-                    <option value="DONE">Done</option>
-                  </select>
-                </div>
-              ))}
-              {tasksData?.myTasks.length === 0 && <p>Belum ada task di tim Anda.</p>}
+                ))
+              ) : (
+                <p className="text-gray-500">Belum ada task di tim Anda.</p>
+              )}
             </div>
           )}
         </div>
